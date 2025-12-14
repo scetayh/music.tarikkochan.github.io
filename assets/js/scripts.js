@@ -85,10 +85,31 @@ const currentArtistEl = document.getElementById('currentArtist')
 
 let playlists = []
 
-// 加载 JSON
+// 加载 JSON：优先从 blog 配置获取（config.shokax.json 的 audio 字段），失败时回退到本地
 async function loadPlaylists() {
-    const res = await fetch('/assets/json/playlists.json')
-    playlists = await res.json()
+    playlistButtonsEl.innerHTML = '加载歌单...'
+    try {
+        const cfgRes = await fetch('https://blog.tarikkochan.top/config.shokax.json')
+        if (cfgRes && cfgRes.ok) {
+            const cfg = await cfgRes.json()
+            if (cfg && Array.isArray(cfg.audio) && cfg.audio.length > 0) {
+                playlists = cfg.audio.map(item => ({ name: item.title || '', url: (Array.isArray(item.list) && item.list[0]) || item.list || '' }))
+            }
+        }
+    } catch (e) {
+        console.warn('fetch remote config failed, will fallback to local playlists.json', e)
+    }
+
+    if (!playlists || playlists.length === 0) {
+        try {
+            const res = await fetch('/assets/json/playlists.json')
+            if (res && res.ok) playlists = await res.json()
+        } catch (e) {
+            console.error('failed to load local playlists.json', e)
+            playlists = []
+        }
+    }
+
     playlistButtonsEl.innerHTML = ''
     playlists.forEach((pl, idx) => {
         const btn = document.createElement('button')
@@ -99,7 +120,7 @@ async function loadPlaylists() {
     })
 
     // 初始化 nyx-player，传入所有 URL（用于标签和内部切换）
-    const urls = playlists.map(p => ({ url: p.url, name: p.name }))
+    const urls = playlists.map(p => ({ url: p.url, name: p.name || p.title || ('playlist-' + Math.random().toString(36).slice(2,6)) }))
     initPlayer('#player', '#showBtn', urls, '#playBtn')
 
     // 为了首次显示第一个歌单的歌曲（如果页面需要），模拟点击第一个
