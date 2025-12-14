@@ -217,6 +217,28 @@
           // 强制设定 audio.src 并重试，直到 audio.src 与期望一致或达到上限
           var audioEl = document.querySelector('#MusicPlayerRoot audio') || document.querySelector('audio')
           if (audioEl && streamUrl) {
+            try {
+              // 尽早启用 preload 和跨域，以便浏览器可并行预取并利用 CDN 缓存
+              audioEl.preload = 'auto'
+              audioEl.crossOrigin = 'anonymous'
+              audioEl.setAttribute && audioEl.setAttribute('preload', 'auto')
+            } catch (e) {}
+
+            // 在 head 中插入或更新 preload link，帮助浏览器提前建立连接
+            try {
+              var existingPre = document.getElementById('__preload_audio')
+              if (existingPre) {
+                existingPre.href = streamUrl
+              } else {
+                var lk = document.createElement('link')
+                lk.id = '__preload_audio'
+                lk.rel = 'preload'
+                lk.as = 'audio'
+                lk.href = streamUrl
+                lk.crossOrigin = 'anonymous'
+                document.head && document.head.appendChild(lk)
+              }
+            } catch (e) {}
             var setAttempts = 0
             var setMax = 10
             var setIntervalId = setInterval(function () {
