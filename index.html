@@ -197,14 +197,102 @@
         li.dataset.index = i
         li.innerHTML = `<div class="song-name">${song.name}</div><div class="artist">${song.artist}</div>`
         li.addEventListener('click', () => {
-          // 点击时，找到对应的内部 li 并触发
-          const internalList = document.querySelectorAll('.playlist ol')[playlistIndex]
-          if (internalList) {
-            const internalLi = internalList.querySelectorAll('li')[i]
-            if (internalLi) internalLi.click()
-          }
-          // 显示歌词与封面
+          // 显示歌词与封面（优先更新 UI）
           showSongDetail(song)
+
+          // 生成 stream URL（兼容多种字段名）并记录调试信息
+          function buildStreamUrl(song) {
+            if (!song) return null
+            if (typeof song.url === 'string' && song.url) return song.url
+            var id = song.id || song.songId || song.song_id || song.sid || song.trackId || song.mid || song.aid
+            var server = song.server || song.source || song.provider || 'netease'
+            if (id) return METING_API + '?type=url&id=' + encodeURIComponent(id) + '&server=' + encodeURIComponent(server)
+            return null
+          }
+
+          var streamUrl = buildStreamUrl(song)
+          console.info('[PLAY-DEBUG] click external song', { playlistIndex: playlistIndex, index: i, name: song.name, song })
+          console.info('[PLAY-DEBUG] built streamUrl', streamUrl)
+
+          // 强制设定 audio.src 并重试，直到 audio.src 与期望一致或达到上限
+          var audioEl = document.querySelector('#MusicPlayerRoot audio') || document.querySelector('audio')
+          if (audioEl && streamUrl) {
+            var setAttempts = 0
+            var setMax = 10
+            var setIntervalId = setInterval(function () {
+              try {
+                setAttempts++
+                audioEl.pause && audioEl.pause()
+                audioEl.src = streamUrl
+                audioEl.load && audioEl.load()
+                var p = audioEl.play && audioEl.play()
+                if (p && typeof p.then === 'function') p.catch(function () {})
+                // check if set
+                if (audioEl.src && audioEl.src.indexOf(streamUrl) !== -1) {
+                  console.info('[PLAY-DEBUG] audio.src set OK', audioEl.src)
+                  clearInterval(setIntervalId)
+                }
+                if (setAttempts >= setMax) {
+                  clearInterval(setIntervalId)
+                  console.warn('[PLAY-DEBUG] failed to confirm audio.src after retries', audioEl.src)
+                }
+              } catch (err) {
+                console.error('[PLAY-DEBUG] set audio error', err)
+                clearInterval(setIntervalId)
+              }
+            }, 200)
+          } else {
+            console.warn('[PLAY-DEBUG] no audio element or no streamUrl', { audioEl: !!audioEl, streamUrl })
+          }
+
+          // 记录希望的播放目标，便于调试或后续同步逻辑使用（带时间戳）
+          window.__desiredPlayback = { playlistIndex: playlistIndex, index: i, streamUrl: streamUrl, timestamp: Date.now() }
+
+          // 激活内置 tab，随后反复尝试点击内部 li 并标记 active（以强同步 UI）
+          var tabLi = document.querySelector('.tabs .nav li[data-index="' + playlistIndex + '"]')
+          if (tabLi) tabLi.click()
+
+          var attempts = 0
+          var maxAttempts = 20
+          function tryClickInternal() {
+            attempts++
+            // 更稳健地查找当前可见的内部 ol，而不是直接按索引访问 NodeList
+            var ols = document.querySelectorAll('.playlist ol')
+            var internalList = null
+            for (var k = 0; k < ols.length; k++) {
+              var o = ols[k]
+              try {
+                if (o.offsetParent !== null) { internalList = o; break }
+                var style = window.getComputedStyle(o)
+                if (style && style.display !== 'none' && style.visibility !== 'hidden') { internalList = o; break }
+              } catch (e) {}
+            }
+            // 如果只有一个 ol，则优先使用它
+            if (!internalList && ols.length === 1) internalList = ols[0]
+
+            if (internalList) {
+              var items = internalList.querySelectorAll('li')
+              var internalLi = items && items.length > i ? items[i] : null
+              if (internalLi) {
+                try {
+                  // 清理同级的 current/active 标记（尽量配合内置样式）
+                  items && Array.prototype.forEach.call(items, function(x){ try{x.classList && x.classList.remove && x.classList.remove('active'); x.classList.remove && x.classList.remove('current')}catch(e){} })
+                  internalLi.classList && internalLi.classList.add && internalLi.classList.add('active')
+                } catch (e) {}
+                try { internalLi.click && internalLi.click() } catch(e){}
+                console.info('[PLAY-DEBUG] clicked internal li', { playlistIndex: playlistIndex, index: i })
+                return
+              }
+            }
+            if (attempts < maxAttempts) setTimeout(tryClickInternal, 200)
+            else console.warn('[PLAY-DEBUG] failed to find internal li to click', { playlistIndex: playlistIndex, index: i })
+          }
+          tryClickInternal()
+          // 立即与延迟多次强制同步右侧 UI，覆盖可能的异步回写，并启用 UI 强制器（延长窗口）
+          try { syncUIFromSong(song) } catch (e) {}
+          setTimeout(function(){ try { syncUIFromSong(song) } catch(e){} }, 700)
+          setTimeout(function(){ try { syncUIFromSong(song) } catch(e){} }, 2000)
+          try { startUIEnforcer(song, 8000) } catch(e){}
         })
         songListEl.appendChild(li)
       })
@@ -233,6 +321,64 @@
         lyricsEl.textContent = '获取歌词失败'
         currentLyricGroups = []
       })
+    }
+
+    // 强制同步右侧 UI（标题/艺术家/封面），用于抵消内置播放器异步回写
+    function syncUIFromSong(song) {
+      try {
+        if (!song) return
+        if (song.name) currentTitleEl.textContent = song.name
+        if (song.artist) currentArtistEl.textContent = song.artist
+        // 尝试多种常见字段名获取封面
+        var pic = song.pic || (song.al && song.al.picUrl) || song.picUrl || (song.album && song.album.picUrl) || ''
+        if (pic) {
+          // preload then swap to avoid flash
+          try {
+            var img = new Image()
+            img.onload = function(){ try { coverEl.src = pic } catch(e){} }
+            img.onerror = function(){ /* keep existing */ }
+            img.src = pic
+          } catch (e) {
+            try { coverEl.src = pic } catch(e){}
+          }
+        } else {
+          // 不主动清空已有封面，避免闪烁
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    // 启动 UI 强制器：在短时间内定期重写右侧 UI，并监听内部 DOM 变更以立即恢复期望内容
+    function startUIEnforcer(song, durationMs) {
+      try {
+        durationMs = durationMs || 6000
+        // 清理已有的 enforcer
+        if (window.__uiEnforcer) {
+          try { window.__uiEnforcer.observer.disconnect() } catch (e) {}
+          try { clearInterval(window.__uiEnforcer.intervalId) } catch (e) {}
+          window.__uiEnforcer = null
+        }
+
+        // 定期强制同步
+        var intervalId = setInterval(function(){ try { syncUIFromSong(song) } catch(e){} }, 200)
+
+        // 监听内部播放器区域的变化，若发生变更则立即覆盖为期望内容
+        var root = document.querySelector('#MusicPlayerRoot') || document.body
+        var observer = new MutationObserver(function(muts){ try { syncUIFromSong(song) } catch(e){} })
+        observer.observe(root, { childList: true, subtree: true, attributes: true, characterData: true })
+
+        // 记录并在超时后清理
+        var timeoutId = setTimeout(function(){
+          try { observer.disconnect() } catch(e){}
+          try { clearInterval(intervalId) } catch(e){}
+          if (window.__uiEnforcer && window.__uiEnforcer.timeoutId === timeoutId) window.__uiEnforcer = null
+        }, durationMs)
+
+        window.__uiEnforcer = { observer: observer, intervalId: intervalId, timeoutId: timeoutId }
+      } catch (e) {
+        // swallow
+      }
     }
 
     function renderLyrics(groups) {
@@ -301,7 +447,24 @@
     function watchPlayerSongChange() {
       // 手动轮询当前 song info 顶层区域
       setInterval(() => {
-        // 打开 AudioInfo 中的 title 与 artist DOM
+        // 如果外部点击设置了期望播放（window.__desiredPlayback），在短时间内
+        // 如果实际 audio.src 还未与期望 streamUrl 同步，则不要让内部播放器覆盖右侧信息，
+        // 以避免封面/标题闪回旧值。
+        var desired = window.__desiredPlayback
+        var audio = document.querySelector('#MusicPlayerRoot audio') || document.querySelector('audio')
+        // 如果 audio 已经切到期望流，则认为同步完成，清除期望标记
+        if (desired && audio && audio.src && desired.streamUrl && audio.src.indexOf(desired.streamUrl) !== -1) {
+          try { delete window.__desiredPlayback } catch (e) { window.__desiredPlayback = null }
+          desired = null
+        }
+
+        // 如果仍有期望播放且在短时间内（5s）未同步，则跳过内部覆盖，但仍确保歌词同步
+        if (desired && (Date.now() - (desired.timestamp || 0) < 5000)) {
+          setupAudioSync()
+          return
+        }
+
+        // 打开 AudioInfo 中的 title 与 artist DOM（正常情况下允许内部播放器更新 UI）
         const titleEl = document.querySelector('.preview h4')
         const artistEl = document.querySelector('.preview span')
         if (titleEl && artistEl) {
@@ -310,7 +473,7 @@
           currentTitleEl.textContent = t
           currentArtistEl.textContent = a
         }
-        // cover
+        // cover — 仅在有 src 时更新
         const coverImg = document.querySelector('.cover img')
         if (coverImg && coverImg.getAttribute('src')) {
           coverEl.src = coverImg.getAttribute('src')
