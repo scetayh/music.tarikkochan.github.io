@@ -1,0 +1,96 @@
+/* 简单布局：不美化，优先功能 */
+
+body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    padding: 1rem;
+}
+
+#controls {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+#playlistButtons {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+button.playlist-btn {
+    padding: 0.4rem 0.6rem;
+    cursor: pointer;
+}
+
+#main {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+}
+
+#songList {
+    min-width: 280px;
+    max-height: 480px;
+    overflow: auto;
+    border: 1px solid #ddd;
+    padding: 0.5rem;
+}
+
+#songList li {
+    list-style: none;
+    padding: 0.4rem;
+    cursor: pointer;
+    border-bottom: 1px solid #f4f4f4;
+}
+
+#songList li:hover {
+    background: #f7f7f7;
+}
+
+#songList li .artist {
+    color: #666;
+    font-size: 0.85rem;
+}
+
+#info {
+    flex: 1;
+    border: 1px solid #ddd;
+    padding: 0.5rem;
+    max-height: 480px;
+    overflow: auto
+}
+
+#lyrics {
+    white-space: pre-wrap;
+    font-size: 0.95rem;
+}
+
+.lyric-line {
+    padding: 0.2rem;
+    border-radius: 3px;
+}
+
+.lyric-line.current {
+    background: #fffae6;
+}
+
+.bilingual .orig {
+    font-weight: 600
+}
+
+.cover {
+    width: 120px;
+    height: 120px;
+    object-fit: cover;
+    border: 1px solid #ddd;
+}
+
+#player {
+    display: inline-block;
+}
+
+hidden {
+    display: none;
+}
